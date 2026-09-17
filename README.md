@@ -45,3 +45,8 @@ turing-panel on
 
 Stop the user service with `systemctl --user stop turing-panel.service`.
 Ctrl+C on a manual `run` keeps the last frame on the panel.
+
+If the panel is unplugged or hung at login, `run` retries for **3 minutes**
+then exits 0 so systemd does not keep restarting. Replug and
+`systemctl --user start turing-panel.service` (or log in again) to try once
+more. Unexpected crashes still restart, but only five times in three minutes.

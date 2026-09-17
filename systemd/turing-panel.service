@@ -1,11 +1,14 @@
 [Unit]
 Description=Turing USB IPS stats panel
 After=default.target
+# Crash-loop backstop only. A missing panel exits 0 after --wait-device.
+StartLimitIntervalSec=3min
+StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/turing-panel run
-Restart=always
+ExecStart=%h/.local/bin/turing-panel run --wait-device 180
+Restart=on-failure
 RestartSec=5
 TimeoutStopSec=5
 Environment=PYTHONUNBUFFERED=1

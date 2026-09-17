@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import serial
 from PIL import Image, ImageDraw, ImageFont
 
 from turing_lcd import Orientation, TuringLcd, find_port
@@ -24,6 +25,17 @@ FONT_MED = "/usr/share/fonts/noto/NotoSans-Medium.ttf"
 # rotate 90° CCW onto the panel (ROTATE_270 was 180° off: readable but upside down).
 LAYOUT_SIZE = (480, 320)
 MOUNT_ROTATE = Image.Transpose.ROTATE_90
+# Give USB a few minutes after login, then stop. Missing/hung hardware
+# must not restart the user service forever.
+DEVICE_WAIT_SECS = 180
+DEVICE_RETRY_SECS = 2
+OPEN_ERRORS = (
+    FileNotFoundError,
+    PermissionError,
+    OSError,
+    serial.SerialException,
+    serial.SerialTimeoutException,
+)
 
 # Event Horizon
 BG = (28, 30, 38)
@@ -349,6 +361,47 @@ def open_lcd(port: str | None, brightness: int) -> TuringLcd:
     return lcd
 
 
+def wait_for_lcd(
+    port: str | None,
+    brightness: int,
+    timeout: float,
+    should_stop=lambda: False,
+) -> TuringLcd | None:
+    """Open the panel, retrying until timeout. Returns None instead of looping forever."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    last_log = 0.0
+    attempt = 0
+    while not should_stop():
+        attempt += 1
+        try:
+            return open_lcd(port, brightness)
+        except OPEN_ERRORS as exc:
+            left = deadline - time.monotonic()
+            now = time.monotonic()
+            if attempt == 1 or now - last_log >= 30:
+                print(f"UsbMonitor not ready ({exc}); {max(0.0, left):.0f}s left", flush=True)
+                last_log = now
+            if left <= 0:
+                print(
+                    "UsbMonitor wait timed out; stopping so a missing panel "
+                    "cannot restart forever. Start again with: "
+                    "systemctl --user start turing-panel.service",
+                    flush=True,
+                )
+                return None
+            time.sleep(min(DEVICE_RETRY_SECS, max(0.2, left)))
+    return None
+
+
+def close_lcd(lcd: TuringLcd | None) -> None:
+    if lcd is None:
+        return
+    try:
+        lcd.close()
+    except OPEN_ERRORS:
+        pass
+
+
 def cmd_test(args) -> int:
     with open_lcd(args.port, args.brightness) as lcd:
         w, h = LAYOUT_SIZE
@@ -370,31 +423,55 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, handle)
     signal.signal(signal.SIGTERM, handle)
 
-    lcd = open_lcd(args.port, args.brightness)
+    print(f"waiting up to {args.wait_device:.0f}s for UsbMonitor", flush=True)
+    lcd = wait_for_lcd(
+        args.port, args.brightness, args.wait_device, should_stop=lambda: stop
+    )
+    if lcd is None:
+        return 0
+
+    w, h = LAYOUT_SIZE
     try:
-        w, h = LAYOUT_SIZE
         label = lcd.info.label if lcd.info else "Turing panel"
         prev = None
         while not stop:
             t0 = time.perf_counter()
             usage = sample_usage()
             frame = to_native(render_panel(w, h, usage, label))
-            if prev is None:
-                lcd.display_image(frame)
-                n_patches = 1
-            else:
-                n_patches = 0
-                for x, y, patch in dirty_patches(prev, frame):
-                    lcd.display_image(patch, x, y)
-                    n_patches += 1
+            try:
+                if prev is None:
+                    lcd.display_image(frame)
+                    n_patches = 1
+                else:
+                    n_patches = 0
+                    for x, y, patch in dirty_patches(prev, frame):
+                        lcd.display_image(patch, x, y)
+                        n_patches += 1
+            except OPEN_ERRORS as exc:
+                print(f"lost UsbMonitor ({exc}); reconnecting", flush=True)
+                close_lcd(lcd)
+                lcd = wait_for_lcd(
+                    args.port,
+                    args.brightness,
+                    args.wait_device,
+                    should_stop=lambda: stop,
+                )
+                if lcd is None:
+                    return 0
+                label = lcd.info.label if lcd.info else label
+                prev = None
+                continue
             prev = frame
             dt = time.perf_counter() - t0
             print(f"update {n_patches} rects in {dt:.2f}s", flush=True)
             time.sleep(max(0.15, args.interval - dt))
         if args.off_on_exit:
-            lcd.screen_off()
+            try:
+                lcd.screen_off()
+            except OPEN_ERRORS:
+                pass
     finally:
-        lcd.close()
+        close_lcd(lcd)
     return 0
 
 
@@ -427,6 +504,12 @@ def main() -> int:
     p_run = sub.add_parser("run", help="live CPU/GPU/RAM/disk overlay")
     p_run.add_argument("--interval", type=float, default=2.0)
     p_run.add_argument("--off-on-exit", action="store_true")
+    p_run.add_argument(
+        "--wait-device",
+        type=float,
+        default=DEVICE_WAIT_SECS,
+        help="seconds to wait for the USB panel before giving up (default 180)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_off = sub.add_parser("off", help="blank the panel")
@@ -436,7 +519,7 @@ def main() -> int:
     p_on.set_defaults(func=cmd_on)
 
     args = parser.parse_args()
-    if args.port is None and not find_port():
+    if args.cmd != "run" and args.port is None and not find_port():
         print("No Turing UsbMonitor found on USB.", file=sys.stderr)
         return 1
     try:
