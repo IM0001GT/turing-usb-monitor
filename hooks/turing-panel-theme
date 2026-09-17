@@ -1,0 +1,4 @@
+#!/bin/bash
+# Refresh the USB stats panel after `omarchy theme set`.
+# The daemon also polls colors.toml, so this only makes the swap immediate.
+systemctl --user kill -s HUP turing-panel.service >/dev/null 2>&1 || true

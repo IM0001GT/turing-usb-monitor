@@ -17,6 +17,11 @@ This repo does the same with RGB565 rectangles and a live CPU / GPU / RAM /
 disk overlay (12-hour clock). Stats are sampled from the Omarchy Hardware
 Tooltip `system-usage` script when that plugin is installed.
 
+Colors follow the **active Omarchy theme**:
+`~/.local/state/omarchy/current/theme/colors.toml`. A `theme-set` hook sends
+SIGHUP so a swap is immediate; the daemon also polls that file so a missed
+hook still picks up the next frame.
+
 A full frame takes about 2.4s on this USB link, so live mode sends only
 changed rectangles.
 
@@ -30,6 +35,7 @@ ln -sf "$PWD/turing-panel" ~/.local/bin/turing-panel
 install -m 644 systemd/turing-panel.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now turing-panel.service
+omarchy hook install theme-set "$PWD/hooks/turing-panel-theme"
 ```
 
 You must be in group `uucp` (the udev script adds you; new logins pick it up).

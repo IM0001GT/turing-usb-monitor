@@ -14,6 +14,7 @@ from pathlib import Path
 import serial
 from PIL import Image, ImageDraw, ImageFont
 
+from omarchy_theme import Palette, load_palette
 from turing_lcd import Orientation, TuringLcd, find_port
 
 HERE = Path(__file__).resolve().parent
@@ -37,16 +38,7 @@ OPEN_ERRORS = (
     serial.SerialTimeoutException,
 )
 
-# Event Horizon
-BG = (28, 30, 38)
-CARD = (35, 37, 48)
-FG = (203, 206, 208)
-MUTED = (111, 111, 112)
-ACCENT = (38, 187, 217)
-GREEN = (41, 211, 152)
-YELLOW = (250, 194, 154)
-RED = (233, 86, 120)
-TRACK = (46, 48, 62)
+
 
 
 def font(path: str, size: int) -> ImageFont.FreeTypeFont:
@@ -110,16 +102,6 @@ def sample_usage() -> dict:
     return parse_usage(out)
 
 
-def load_pct(value: int | None) -> tuple[int, int, int]:
-    if value is None:
-        return ACCENT
-    if value >= 90:
-        return RED
-    if value >= 70:
-        return YELLOW
-    return GREEN
-
-
 def shorten(text: str, limit: int) -> str:
     text = " ".join(text.split())
     if len(text) <= limit:
@@ -127,8 +109,17 @@ def shorten(text: str, limit: int) -> str:
     return text[: limit - 1] + "…"
 
 
-def draw_bar(d: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int, pct: int | None, color) -> None:
-    d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=TRACK)
+def draw_bar(
+    d: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    pct: int | None,
+    color,
+    pal: Palette,
+) -> None:
+    d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=pal.track)
     if pct is None:
         return
     fill = max(h, int((w * max(0, min(100, pct))) / 100))
@@ -158,31 +149,32 @@ def draw_card(
     value: str,
     temp: str,
     pct: int | None,
+    pal: Palette,
 ) -> None:
     x0, y0, x1, y1 = box
-    d.rounded_rectangle([x0, y0, x1, y1], radius=10, fill=CARD)
+    d.rounded_rectangle([x0, y0, x1, y1], radius=10, fill=pal.card)
     inner = 14
     label_f = font(FONT_MED, 11)
     name_f = font(FONT_REG, 12)
     value_f = font(FONT_MED, 28)
     temp_f = font(FONT_MED, 13)
     max_chars = max(8, (x1 - x0 - inner * 2) // 7)
-    color = load_pct(pct)
+    color = pal.load_pct(pct)
 
     # Keep the numbers, name, and bar as one cluster so the card does not look empty.
     block_h = 92
     top = y0 + max(10, (y1 - y0 - block_h) // 2)
-    d.text((x0 + inner, top), kind, font=label_f, fill=MUTED)
+    d.text((x0 + inner, top), kind, font=label_f, fill=pal.muted)
     if temp:
         tw = d.textlength(temp, font=temp_f)
         d.text((x1 - inner - tw, top - 1), temp, font=temp_f, fill=color)
-    d.text((x0 + inner, top + 16), shorten(name, max_chars), font=name_f, fill=FG)
-    d.text((x0 + inner, top + 36), value, font=value_f, fill=FG)
-    draw_bar(d, x0 + inner, top + 76, x1 - x0 - inner * 2, 7, pct, color)
+    d.text((x0 + inner, top + 16), shorten(name, max_chars), font=name_f, fill=pal.fg)
+    d.text((x0 + inner, top + 36), value, font=value_f, fill=pal.fg)
+    draw_bar(d, x0 + inner, top + 76, x1 - x0 - inner * 2, 7, pct, color, pal)
 
 
-def render_panel(width: int, height: int, info: dict, subtitle: str) -> Image.Image:
-    img = Image.new("RGB", (width, height), BG)
+def render_panel(width: int, height: int, info: dict, pal: Palette) -> Image.Image:
+    img = Image.new("RGB", (width, height), pal.bg)
     d = ImageDraw.Draw(img)
     title_f = font(FONT_MED, 18)
     small_f = font(FONT_REG, 11)
@@ -193,12 +185,12 @@ def render_panel(width: int, height: int, info: dict, subtitle: str) -> Image.Im
     hour = now.hour % 12 or 12
     clock = f"{hour}:{now:%M:%S} {now:%p}"
 
-    d.text((pad, 7), clock, font=title_f, fill=FG)
+    d.text((pad, 7), clock, font=title_f, fill=pal.fg)
     clock_w = d.textlength(clock, font=title_f)
-    d.text((pad + clock_w + 8, 12), "STATS", font=small_f, fill=ACCENT)
-    sub = shorten(subtitle, 28)
+    d.text((pad + clock_w + 8, 12), "STATS", font=small_f, fill=pal.accent)
+    sub = shorten(pal.name, 28)
     sw = d.textlength(sub, font=small_f)
-    d.text((width - pad - sw, 12), sub, font=small_f, fill=MUTED)
+    d.text((width - pad - sw, 12), sub, font=small_f, fill=pal.muted)
 
     grid_top = header_h
     grid_h = height - grid_top - pad
@@ -222,6 +214,7 @@ def render_panel(width: int, height: int, info: dict, subtitle: str) -> Image.Im
         f"{cpu if cpu is not None else '—'}%",
         f"{cpu_temp}°" if cpu_temp is not None else "",
         cpu,
+        pal,
     )
 
     gpu = info.get("gpu")
@@ -234,6 +227,7 @@ def render_panel(width: int, height: int, info: dict, subtitle: str) -> Image.Im
         f"{gpu if gpu is not None else '—'}%",
         f"{gpu_temp}°" if gpu_temp is not None else "",
         gpu,
+        pal,
     )
 
     ram_pct = info.get("ram_pct")
@@ -252,6 +246,7 @@ def render_panel(width: int, height: int, info: dict, subtitle: str) -> Image.Im
         ram_value,
         f"{ram_temp}°" if ram_temp is not None else "",
         ram_pct,
+        pal,
     )
 
     disk = pick_disk(info)
@@ -266,9 +261,10 @@ def render_panel(width: int, height: int, info: dict, subtitle: str) -> Image.Im
             f"{disk['used']:.0f}/{disk['total']:.0f}G",
             f"{disk_temp}°" if disk_temp is not None else "",
             disk["pct"],
+            pal,
         )
     else:
-        draw_card(d, cells[3], "DISK", "—", "—", "", None)
+        draw_card(d, cells[3], "DISK", "—", "—", "", None, pal)
 
     return img
 
@@ -327,16 +323,17 @@ def dirty_patches(prev: Image.Image, curr: Image.Image, gap: int = 6):
         yield x0, y0, curr.crop((x0, y0, x1 + 1, y1 + 1))
 
 
-def render_test(width: int, height: int, info_label: str, hello: bytes) -> Image.Image:
-    img = Image.new("RGB", (width, height), BG)
+def render_test(width: int, height: int, info_label: str, hello: bytes, pal: Palette) -> Image.Image:
+    img = Image.new("RGB", (width, height), pal.bg)
     d = ImageDraw.Draw(img)
     title_f = font(FONT_MED, 22)
     body_f = font(FONT_REG, 13)
     small_f = font(FONT_REG, 12)
-    d.rectangle([0, 0, width, 10], fill=ACCENT)
-    d.text((16, 18), "TOP", font=small_f, fill=ACCENT)
-    d.text((16, 40), "Turing UsbMonitor", font=title_f, fill=FG)
+    d.rectangle([0, 0, width, 10], fill=pal.accent)
+    d.text((16, 18), "TOP", font=small_f, fill=pal.accent)
+    d.text((16, 40), "Turing UsbMonitor", font=title_f, fill=pal.fg)
     lines = [
+        pal.name,
         info_label,
         f"layout {width} × {height}  landscape",
         "native 320 × 480, rotated 90° CCW",
@@ -344,9 +341,9 @@ def render_test(width: int, height: int, info_label: str, hello: bytes) -> Image
     ]
     y = 84
     for line in lines:
-        d.text((16, y), line, font=body_f, fill=FG)
+        d.text((16, y), line, font=body_f, fill=pal.fg)
         y += 20
-    d.text((16, height - 28), "If TOP is not at the physical top, say so.", font=small_f, fill=MUTED)
+    d.text((16, height - 28), "If TOP is not at the physical top, say so.", font=small_f, fill=pal.muted)
     return img
 
 
@@ -408,20 +405,26 @@ def cmd_test(args) -> int:
         label = lcd.info.label if lcd.info else "Turing"
         hello = lcd.info.hello if lcd.info else b""
         t0 = time.perf_counter()
-        lcd.display_image(to_native(render_test(w, h, label, hello)))
+        lcd.display_image(to_native(render_test(w, h, label, hello, load_palette())))
         print(f"test frame pushed in {time.perf_counter() - t0:.2f}s  layout {w}x{h}")
     return 0
 
 
 def cmd_run(args) -> int:
     stop = False
+    reload_theme = False
 
     def handle(_sig, _frame):
         nonlocal stop
         stop = True
 
+    def handle_hup(_sig, _frame):
+        nonlocal reload_theme
+        reload_theme = True
+
     signal.signal(signal.SIGINT, handle)
     signal.signal(signal.SIGTERM, handle)
+    signal.signal(signal.SIGHUP, handle_hup)
 
     print(f"waiting up to {args.wait_device:.0f}s for UsbMonitor", flush=True)
     lcd = wait_for_lcd(
@@ -431,13 +434,20 @@ def cmd_run(args) -> int:
         return 0
 
     w, h = LAYOUT_SIZE
+    pal = load_palette()
+    print(f"theme {pal.name}", flush=True)
     try:
         label = lcd.info.label if lcd.info else "Turing panel"
         prev = None
         while not stop:
+            if reload_theme or pal.changed():
+                reload_theme = False
+                pal = load_palette()
+                prev = None
+                print(f"theme {pal.name}", flush=True)
             t0 = time.perf_counter()
             usage = sample_usage()
-            frame = to_native(render_panel(w, h, usage, label))
+            frame = to_native(render_panel(w, h, usage, pal))
             try:
                 if prev is None:
                     lcd.display_image(frame)
