@@ -1,0 +1,4 @@
+# Turing UsbMonitor / USB35INCHIPSV2 (QinHeng 1a86:5722)
+# CDC ACM serial gadget used as an AIDA64-style IPS panel, not a DRM monitor.
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="5722", \
+  MODE="0660", GROUP="uucp", TAG+="uaccess", SYMLINK+="turing-usbmonitor"

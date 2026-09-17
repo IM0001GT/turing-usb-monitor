@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PY="$ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  echo "Missing venv at $ROOT/.venv — run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
+  exit 1
+fi
+exec "$PY" "$ROOT/turing_panel.py" "$@"
