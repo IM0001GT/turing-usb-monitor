@@ -21,6 +21,8 @@ HERE = Path(__file__).resolve().parent
 SYSTEM_USAGE = Path.home() / ".config/omarchy/plugins/im0001gt.hw-tooltip/scripts/system-usage"
 FONT_REG = "/usr/share/fonts/noto/NotoSans-Regular.ttf"
 FONT_MED = "/usr/share/fonts/noto/NotoSans-Medium.ttf"
+FONT_MONO = "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf"
+FULL_REFRESH_EVERY = 15
 
 # Native panel is 320x480 portrait. Compose a 480x320 landscape UI, then
 # rotate 90° CCW onto the panel (ROTATE_270 was 180° off: readable but upside down).
@@ -156,8 +158,8 @@ def draw_card(
     inner = 14
     label_f = font(FONT_MED, 11)
     name_f = font(FONT_REG, 12)
-    value_f = font(FONT_MED, 28)
-    temp_f = font(FONT_MED, 13)
+    value_f = font(FONT_MONO, 26)
+    temp_f = font(FONT_MONO, 13)
     max_chars = max(8, (x1 - x0 - inner * 2) // 7)
     color = pal.load_pct(pct)
 
@@ -167,8 +169,11 @@ def draw_card(
     d.text((x0 + inner, top), kind, font=label_f, fill=pal.muted)
     if temp:
         tw = d.textlength(temp, font=temp_f)
+        temp_box = [x1 - inner - max(int(tw) + 4, 44), top - 1, x1 - inner, top + 16]
+        d.rectangle(temp_box, fill=pal.card)
         d.text((x1 - inner - tw, top - 1), temp, font=temp_f, fill=color)
     d.text((x0 + inner, top + 16), shorten(name, max_chars), font=name_f, fill=pal.fg)
+    d.rectangle([x0 + inner, top + 36, x1 - inner, top + 70], fill=pal.card)
     d.text((x0 + inner, top + 36), value, font=value_f, fill=pal.fg)
     draw_bar(d, x0 + inner, top + 76, x1 - x0 - inner * 2, 7, pct, color, pal)
 
@@ -269,8 +274,12 @@ def render_panel(width: int, height: int, info: dict, pal: Palette) -> Image.Ima
     return img
 
 
-def dirty_patches(prev: Image.Image, curr: Image.Image, gap: int = 6):
-    """Yield (x, y, crop) for changed row-clusters so we skip full-frame USB writes."""
+def dirty_patches(prev: Image.Image, curr: Image.Image, gap: int = 8, pad: int = 4):
+    """Yield full-width strips for changed row-clusters.
+
+    Rev A is unreliable with narrow x,y rectangles (garbled glyphs on the
+    cards that update every tick). Whole scanlines keep the blit aligned.
+    """
     if prev.size != curr.size:
         yield 0, 0, curr
         return
@@ -300,27 +309,9 @@ def dirty_patches(prev: Image.Image, curr: Image.Image, gap: int = 6):
         clusters.append((start, last))
 
     for y0, y1 in clusters:
-        x0, x1 = w, -1
-        for y in range(y0, y1 + 1):
-            off = y * stride
-            row_p = prev_b[off : off + stride]
-            row_c = curr_b[off : off + stride]
-            if row_p == row_c:
-                continue
-            for x in range(w):
-                i = x * 3
-                if row_p[i : i + 3] != row_c[i : i + 3]:
-                    if x < x0:
-                        x0 = x
-                    if x > x1:
-                        x1 = x
-        if x1 < 0:
-            continue
-        x0 = max(0, x0 - 2)
-        x1 = min(w - 1, x1 + 2)
-        y0 = max(0, y0 - 1)
-        y1 = min(h - 1, y1 + 1)
-        yield x0, y0, curr.crop((x0, y0, x1 + 1, y1 + 1))
+        y0 = max(0, y0 - pad)
+        y1 = min(h - 1, y1 + pad)
+        yield 0, y0, curr.crop((0, y0, w, y1 + 1))
 
 
 def render_test(width: int, height: int, info_label: str, hello: bytes, pal: Palette) -> Image.Image:
@@ -439,6 +430,7 @@ def cmd_run(args) -> int:
     try:
         label = lcd.info.label if lcd.info else "Turing panel"
         prev = None
+        frames = 0
         while not stop:
             if reload_theme or pal.changed():
                 reload_theme = False
@@ -449,14 +441,18 @@ def cmd_run(args) -> int:
             usage = sample_usage()
             frame = to_native(render_panel(w, h, usage, pal))
             try:
-                if prev is None:
+                frames += 1
+                if prev is None or frames % FULL_REFRESH_EVERY == 0:
                     lcd.display_image(frame)
                     n_patches = 1
+                    frames = 0
                 else:
                     n_patches = 0
                     for x, y, patch in dirty_patches(prev, frame):
                         lcd.display_image(patch, x, y)
                         n_patches += 1
+                    if n_patches == 0:
+                        frames -= 1
             except OPEN_ERRORS as exc:
                 print(f"lost UsbMonitor ({exc}); reconnecting", flush=True)
                 close_lcd(lcd)

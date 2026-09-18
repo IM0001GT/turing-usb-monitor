@@ -22,8 +22,9 @@ Colors follow the **active Omarchy theme**:
 SIGHUP so a swap is immediate; the daemon also polls that file so a missed
 hook still picks up the next frame.
 
-A full frame takes about 2.4s on this USB link, so live mode sends only
-changed rectangles.
+A full frame takes about 2.4s on this USB link. Live mode sends changed
+full-width scanlines (narrow rectangles scramble glyphs on rev A) and
+repaints the whole panel every ~30s.
 
 ## Setup
 

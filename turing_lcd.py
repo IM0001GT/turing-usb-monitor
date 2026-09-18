@@ -193,5 +193,9 @@ class TuringLcd:
         y1 = y + img_h - 1
         payload = image_to_rgb565le(img)
         self.send_command(Command.DISPLAY_BITMAP, x, y, x1, y1)
-        self._write(payload)
+        self.ser.flush()
+        # Firmware is happiest with chunks that are a multiple of native width.
+        chunk = max(width * 8, 512)
+        for i in range(0, len(payload), chunk):
+            self._write(payload[i : i + chunk])
         self.ser.flush()
